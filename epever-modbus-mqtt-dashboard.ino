@@ -706,11 +706,19 @@ void serve_firmware_form() {
 
 
 void handle_restart() {
-  server.sendHeader("Location", "/", true);  // HTTP 302 redirect
-  server.send(302, "text/plain", "Rebooting and redirecting to home...");
-  delay(2000);  // Allow the browser time to receive the redirect
-  ESP.restart();  // Now reboot the device
+  server.send(200, "text/html",
+    "<html><head>"
+    "<meta http-equiv='refresh' content='3;url=/' />"
+    "<style>body{background:#111;color:#eee;font-family:sans-serif;text-align:center;padding-top:5rem;}</style>"
+    "</head><body>"
+    "<h1>♻️ Rebooting...</h1>"
+    "<p>You’ll be redirected to the dashboard shortly.</p>"
+    "</body></html>"
+  );
+  delay(1500);  // Give browser a chance to render
+  ESP.restart();
 }
+
 
 void handle_not_found() {
   server.send(404, "text/plain", "Ungaas baba, I 404 you."); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
@@ -758,11 +766,7 @@ void setup()
   });
   
   
-  server.on("/reboot", []() {
-    server.send(200, "text/plain", "Rebooting...");
-    delay(1000);
-    ESP.restart();
-  });
+  server.on("/reboot", handle_restart);
   
   server.onNotFound(handle_not_found);        // When a client requests an unknown URI (i.e. something other than "/"), call function "handle_not_found"
   server.begin();                           // Actually start the server
