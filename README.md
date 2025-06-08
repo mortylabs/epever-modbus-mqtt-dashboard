@@ -1,6 +1,6 @@
 # 🌞 EpEver Solar Monitor
 
-ESP8266 + RS485 + MQTT + Home Assistant - **zero cloud, all sunshine.**
+Monitor your EPEVER solar charge controller via ESP8266, MQTT, and Home Assistant – **fully local and all sunshine,** no vendor cloud required.**
 
 
 ![image](https://github.com/user-attachments/assets/5a68283e-1a5d-4f7e-b3dd-24524c0ed6d9)
@@ -15,8 +15,6 @@ ESP8266 + RS485 + MQTT + Home Assistant - **zero cloud, all sunshine.**
 
 
 Monitor your off-grid solar system in real-time with a WiFi-enabled, Arduino-powered NodeMCU ESP8266. This firmware speaks fluent **Modbus over RS485**, publishes readings via **MQTT**, and auto-discovers in **Home Assistant** - no cloud, no fuss, just data.
-
-![image](https://github.com/user-attachments/assets/605d44dd-83b6-4912-8ff0-1fb569996b49)
 
 
 ---
@@ -53,7 +51,7 @@ Use an RJ45/Ethernet cable to neatly bridge the EPEVER RS485 port, MAX485 breako
 Green/White  → RS485MAX B
 Blue/White   → RS485MAX A
 Brown/White  → NodeMCU GND
-Orange       → NodeMCU VIN
+Orange       → NodeMCU VIN 5v
 ```
 
 ### Full Connection Table
@@ -85,7 +83,13 @@ Install these via Arduino Library Manager:
 - `SoftwareSerial`
 
 ---
+## 🔧 Prerequisites
 
+- Arduino IDE with ESP8266 board support installed
+- USB-to-MicroUSB cable for uploading firmware
+- Local MQTT broker (e.g. Mosquitto)
+- Basic knowledge of Home Assistant (for integration)
+---
 ## 🧰 Getting Started
 
 1. Clone the repo and open `EpEverSolarMonitor.ino`
@@ -136,8 +140,14 @@ Control sleep via MQTT:
 
 ## 📸 Screenshot
 
-![HA Screenshot](https://user-images.githubusercontent.com/placeholder.png)
+![image](https://github.com/user-attachments/assets/605d44dd-83b6-4912-8ff0-1fb569996b49)
+
 
 ---
 
 MIT License - Made with ☀️ by MortyLabs
+
+[![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-ESP8266-blue.svg)](https://arduino-esp8266.readthedocs.io/)
+[![Made with Arduino](https://img.shields.io/badge/made%20with-Arduino-00979D.svg)](https://www.arduino.cc/)
+
