@@ -14,6 +14,9 @@ ESP8266 + RS485 + MQTT + Home Assistant — **zero cloud, all sunshine.**
 
 Monitor your off-grid solar system in real-time with a WiFi-enabled, Arduino-powered NodeMCU ESP8266. This firmware speaks fluent **Modbus over RS485**, publishes readings via **MQTT**, and auto-discovers in **Home Assistant** — no cloud, no fuss, just data.
 
+![image](https://github.com/user-attachments/assets/605d44dd-83b6-4912-8ff0-1fb569996b49)
+
+
 ---
 
 ## ⚡️ Highlights
