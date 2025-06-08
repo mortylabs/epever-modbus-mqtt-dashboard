@@ -3,11 +3,14 @@
 ESP8266 + RS485 + MQTT + Home Assistant — **zero cloud, all sunshine.**
 
 
-![image](https://github.com/user-attachments/assets/46730940-ab0f-4151-a995-00839f5f0ad3)
+![image](https://github.com/user-attachments/assets/b29c8340-b74a-4af5-b138-89ecee3300c0)
+
 
 
 
 > 🔗 [Buy the Charge Controller](https://amzn.eu/d/51auldm)
+> 🔗 [Buy the DS485Max Controller](https://www.amazon.co.uk/dp/B07B667STP)
+
 
 Monitor your off-grid solar system in real-time with a WiFi-enabled, Arduino-powered NodeMCU ESP8266. This firmware speaks fluent **Modbus over RS485**, publishes readings via **MQTT**, and auto-discovers in **Home Assistant** — no cloud, no fuss, just data.
 
