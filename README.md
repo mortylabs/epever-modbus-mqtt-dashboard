@@ -1,6 +1,6 @@
 # 🌞 EpEver Solar Monitor
 
-ESP8266 + RS485 + MQTT + Home Assistant — **zero cloud, all sunshine.**
+ESP8266 + RS485 + MQTT + Home Assistant - **zero cloud, all sunshine.**
 
 
 ![image](https://github.com/user-attachments/assets/b29c8340-b74a-4af5-b138-89ecee3300c0)
