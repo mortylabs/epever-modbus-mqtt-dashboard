@@ -12,7 +12,7 @@ ESP8266 + RS485 + MQTT + Home Assistant — **zero cloud, all sunshine.**
 > 🔗 [Buy the DS485Max Controller](https://www.amazon.co.uk/dp/B07B667STP)
 
 
-Monitor your off-grid solar system in real-time with a WiFi-enabled, Arduino-powered NodeMCU ESP8266. This firmware speaks fluent **Modbus over RS485**, publishes readings via **MQTT**, and auto-discovers in **Home Assistant** — no cloud, no fuss, just data.
+Monitor your off-grid solar system in real-time with a WiFi-enabled, Arduino-powered NodeMCU ESP8266. This firmware speaks fluent **Modbus over RS485**, publishes readings via **MQTT**, and auto-discovers in **Home Assistant** - no cloud, no fuss, just data.
 
 ![image](https://github.com/user-attachments/assets/605d44dd-83b6-4912-8ff0-1fb569996b49)
 
@@ -35,7 +35,7 @@ Monitor your off-grid solar system in real-time with a WiFi-enabled, Arduino-pow
 
 ## 🧠 How It Works
 
-The ESP8266 queries your EPEVER solar charge controller via RS485 using the Modbus protocol. It extracts real-time data like voltages, amps, SOC, and temperatures — then sends it wirelessly over MQTT to your broker (e.g., Mosquitto). If you’re running Home Assistant, it auto-discovers and configures the entities.
+The ESP8266 queries your EPEVER solar charge controller via RS485 using the Modbus protocol. It extracts real-time data like voltages, amps, SOC, and temperatures - then sends it wirelessly over MQTT to your broker (e.g., Mosquitto). If you’re running Home Assistant, it auto-discovers and configures the entities.
 
 No YAML, no cables, no vendor cloud.
 
@@ -138,4 +138,4 @@ Control sleep via MQTT:
 
 ---
 
-MIT License — Made with ☀️ by MortyLabs
+MIT License - Made with ☀️ by MortyLabs
