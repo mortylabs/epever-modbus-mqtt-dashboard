@@ -3,7 +3,8 @@
 ESP8266 + RS485 + MQTT + Home Assistant - **zero cloud, all sunshine.**
 
 
-![image](https://github.com/user-attachments/assets/5a5ca032-8687-4b0f-95d6-b36d8153ecc2)
+![image](https://github.com/user-attachments/assets/5a68283e-1a5d-4f7e-b3dd-24524c0ed6d9)
+
 
 
 
