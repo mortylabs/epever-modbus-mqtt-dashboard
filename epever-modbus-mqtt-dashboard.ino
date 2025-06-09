@@ -350,10 +350,10 @@ String create_json_payload() {
   json += " \"pv_voltage\": " + (reg0x3100_success ? String(pv_voltage) : "null") + ",\n";
   json += " \"pv_current\": " + (reg0x3100_success ? String(pv_current) : "null") + ",\n";
   json += " \"pv_power\": " + (reg0x3100_success ? String(pv_power) : "null") + ",\n";
-  json += " \"battery_volt\": " + (reg0x3100_success ? String(battery_voltage) : "null") + ",\n";
+  json += " \"battery_voltage\": " + (reg0x3100_success ? String(battery_voltage) : "null") + ",\n";
   json += " \"battery_current\": " + (reg0x3100_success ? String(battery_current) : "null") + ",\n";
   json += " \"battery_power\": " + (reg0x3100_success ? String(battery_power) : "null") + ",\n";
-  json += " \"load_volt\": " + (reg0x3100_success ? String(load_voltage) : "null") + ",\n";
+  json += " \"load_voltage\": " + (reg0x3100_success ? String(load_voltage) : "null") + ",\n";
   json += " \"load_current\": " + (reg0x3100_success ? String(load_current) : "null") + ",\n";
   json += " \"load_power\": " + (reg0x3100_success ? String(load_power) : "null") + ",\n";
   json += " \"battery_charge_power\": " + (reg0x3106_success ? String(battery_charge_power) : "null") + ",\n";
@@ -979,11 +979,6 @@ void loop() {
     }
     
     mqtt_last_status = mqttClient.publish(mqtt_topic, create_json_payload().c_str(), true);
-    delay(20);
-    if (!mqttClient.connected()) {
-      reconnect_to_mqtt();
-    }
-    mqttClient.publish("epever/test", "{\"battery_soc\":100}", true);
     if (mqtt_last_status) mqtt_last_sent_millis = millis();
     ct_mqtt = ct_mqtt + 1;
     
