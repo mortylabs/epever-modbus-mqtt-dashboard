@@ -8,5 +8,6 @@ const int   mqtt_port    = 1883;
 const char* wifi_ssid    = "wifi_network";
 const char* wifi_pass    = "wifi_passsword";
 const char* mqtt_topic = "epever/state";
+const char* ha_discovery_topic = "homeassistant/sensor/epever/";
 const char* ota_pass     = "guessme";
 const char* mqtt_deepsleep = "epever/deepsleep";
