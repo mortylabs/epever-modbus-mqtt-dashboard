@@ -275,7 +275,7 @@ void connect_to_wifi() {
   
   digitalWrite(HB, HIGH);
   
-  mqttClient.setBufferSize(512);
+  mqttClient.setBufferSize(1024);
   mqttClient.setServer(mqtt_server, mqtt_port);
   mqttClient.setCallback(on_mqtt_message_received);
   if (!mqttClient.connected()) {
@@ -293,16 +293,16 @@ void reconnect_to_mqtt() {
       if (!ha_discovery_sent) {
         publish_home_assistant_discovery();
         ha_discovery_sent = true;
+        delay(20);
       }
-      delay(20);
     } else {
-      delay(500);
+      delay(200);
     }
   }
 }
 
 void publish_home_assistant_discovery() {
-  String topic_prefix = "homeassistant/sensor/";
+  String topic_prefix = ha_discovery_topic;
   
   struct {
     const char* id;
@@ -320,9 +320,9 @@ void publish_home_assistant_discovery() {
     {"load_voltage", "Load Voltage", "V", "voltage", "measurement"},
     {"load_current", "Load Current", "A", "current", "measurement"},
     {"load_power",   "Load Power",   "W", "power",   "measurement"},
-    {"batt_charge_power", "Battery Charge Power", "W", "power", "measurement"},
-    {"batt_temperature", "Battery Temperature", "C", "temperature", "measurement"},
-    {"batt_soc", "Battery SOC", "%", "battery", "measurement"},
+    {"battery_charge_power", "Battery Charge Power", "W", "power", "measurement"},
+    {"battery_temperature", "Battery Temperature", "C", "temperature", "measurement"},
+    {"battery_soc", "Battery SOC", "%", "battery", "measurement"},
   };
   
   String mac = WiFi.macAddress();
@@ -347,30 +347,30 @@ void publish_home_assistant_discovery() {
 
 String create_json_payload() {
   String json = "{\n";
-  json += " \"pv_volt\": " + (reg0x3100_success ? String(pv_voltage) : "null") + ",\n";
-  json += " \"pv_amps\": " + (reg0x3100_success ? String(pv_current) : "null") + ",\n";
+  json += " \"pv_voltage\": " + (reg0x3100_success ? String(pv_voltage) : "null") + ",\n";
+  json += " \"pv_current\": " + (reg0x3100_success ? String(pv_current) : "null") + ",\n";
   json += " \"pv_power\": " + (reg0x3100_success ? String(pv_power) : "null") + ",\n";
-  json += " \"batt_volt\": " + (reg0x3100_success ? String(battery_voltage) : "null") + ",\n";
-  json += " \"batt_amps\": " + (reg0x3100_success ? String(battery_current) : "null") + ",\n";
+  json += " \"battery_volt\": " + (reg0x3100_success ? String(battery_voltage) : "null") + ",\n";
+  json += " \"battery_current\": " + (reg0x3100_success ? String(battery_current) : "null") + ",\n";
   json += " \"battery_power\": " + (reg0x3100_success ? String(battery_power) : "null") + ",\n";
   json += " \"load_volt\": " + (reg0x3100_success ? String(load_voltage) : "null") + ",\n";
-  json += " \"load_amps\": " + (reg0x3100_success ? String(load_current) : "null") + ",\n";
+  json += " \"load_current\": " + (reg0x3100_success ? String(load_current) : "null") + ",\n";
   json += " \"load_power\": " + (reg0x3100_success ? String(load_power) : "null") + ",\n";
-  json += " \"batt_charge_power\": " + (reg0x3106_success ? String(battery_charge_power) : "null") + ",\n";
-  json += " \"batt_temperature\": " + (battery_temp != NAN && battery_temp != 0  ? String(battery_temp) : "null") + ",\n";
-  json += " \"batt_soc\": " + (reg0x311A_success ? String(battery_soc) : "null") + ",\n";
+  json += " \"battery_charge_power\": " + (reg0x3106_success ? String(battery_charge_power) : "null") + ",\n";
+  json += " \"battery_temperature\": " + (battery_temp != NAN && battery_temp != 0  ? String(battery_temp) : "null") + ",\n";
+  json += " \"battery_soc\": " + (reg0x311A_success ? String(battery_soc) : "null") + ",\n";
   
-  json += " \"last_3100\": " + get_modbus_error_description(reg_0x3100_last_error) + ",\n";
-  json += " \"last_3106\": " + get_modbus_error_description(reg_0x3106_last_error) + ",\n";
-  json += " \"last_3110\": " + get_modbus_error_description(reg_0x3110_last_error) + ",\n";
-  json += " \"last_311A\": " + get_modbus_error_description(reg_0x311a_last_error) + ",\n";
-  json += " \"last_311B\": " + get_modbus_error_description(reg_0x311b_last_error) + ",\n";
-  json += " \"last_3111\": " + get_modbus_error_description(reg_0x3111_last_error) + ",\n";
+  json += " \"last_3100\": \"" + get_modbus_error_description(reg_0x3100_last_error) + "\",\n";
+  json += " \"last_3106\": \"" + get_modbus_error_description(reg_0x3106_last_error) + "\",\n";
+  json += " \"last_3110\": \"" + get_modbus_error_description(reg_0x3110_last_error) + "\",\n";
+  json += " \"last_311A\": \"" + get_modbus_error_description(reg_0x311a_last_error) + "\",\n";
+  json += " \"last_311B\": \"" + get_modbus_error_description(reg_0x311b_last_error) + "\",\n";
+  json += " \"last_3111\": \"" + get_modbus_error_description(reg_0x3111_last_error) + "\",\n";
   
   
   
   json += " \"RSSI\": " + String(WiFi.RSSI()) + ",\n";
-  json += " \"MAC\": \"" + WiFi.macAddress() + "\"\n";
+  json += " \"MAC\": \"" + WiFi.macAddress() + "\",\n";
   json += " \"firmware_version\": \"" + String(FIRMWARE_VERSION) + "\"\n";
   
   json += "}";
@@ -825,8 +825,8 @@ void loop() {
   }
   
   
-  // Restart if no success transmittion in 10  mins
-  if (millis_last_success + (1000 * 60 * 10) < millis() ) {
+  // Restart if no success transmittion in 5  mins
+  if (millis_last_success + (1000 * 60 * 5) < millis() ) {
     ESP.restart();
   }
   
@@ -973,11 +973,17 @@ void loop() {
       reg_0x311a_fail_count = reg_0x311a_fail_count + 1;
       reg_0x311a_last_error = result;
     }
+
     if (!mqttClient.connected()) {
       reconnect_to_mqtt();
     }
     
     mqtt_last_status = mqttClient.publish(mqtt_topic, create_json_payload().c_str(), true);
+    delay(20);
+    if (!mqttClient.connected()) {
+      reconnect_to_mqtt();
+    }
+    mqttClient.publish("epever/test", "{\"battery_soc\":100}", true);
     if (mqtt_last_status) mqtt_last_sent_millis = millis();
     ct_mqtt = ct_mqtt + 1;
     
