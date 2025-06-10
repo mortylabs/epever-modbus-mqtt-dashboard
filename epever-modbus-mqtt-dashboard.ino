@@ -311,18 +311,18 @@ void publish_home_assistant_discovery() {
     const char* device_class;
     const char* state_class;
   } sensors[] = {
-    {"pv_voltage", "PV Voltage", "V", "voltage", "measurement"},
-    {"pv_current", "PV Current", "A", "current", "measurement"},
-    {"pv_power",   "PV Power",   "W", "power",   "measurement"},
-    {"battery_voltage", "Battery Voltage", "V", "voltage", "measurement"},
-    {"battery_current", "Battery Current", "A", "current", "measurement"},
-    {"battery_power",   "Battery Power",   "W", "power",   "measurement"},
-    {"load_voltage", "Load Voltage", "V", "voltage", "measurement"},
-    {"load_current", "Load Current", "A", "current", "measurement"},
-    {"load_power",   "Load Power",   "W", "power",   "measurement"},
-    {"battery_charge_power", "Battery Charge Power", "W", "power", "measurement"},
-    {"battery_temperature", "Battery Temperature", "C", "temperature", "measurement"},
-    {"battery_soc", "Battery SOC", "%", "battery", "measurement"},
+    {"epever_pv_voltage", "PV Voltage", "V", "voltage", "measurement"},
+    {"epever_pv_current", "PV Current", "A", "current", "measurement"},
+    {"epever_pv_power",   "PV Power",   "W", "power",   "measurement"},
+    {"epever_battery_voltage", "Battery Voltage", "V", "voltage", "measurement"},
+    {"epever_battery_current", "Battery Current", "A", "current", "measurement"},
+    {"epever_battery_power",   "Battery Power",   "W", "power",   "measurement"},
+    {"epever_load_voltage", "Load Voltage", "V", "voltage", "measurement"},
+    {"epever_load_current", "Load Current", "A", "current", "measurement"},
+    {"epever_load_power",   "Load Power",   "W", "power",   "measurement"},
+    {"epever_battery_charge_power", "Battery Charge Power", "W", "power", "measurement"},
+    {"epever_battery_temperature", "Battery Temperature", "C", "temperature", "measurement"},
+    {"epever_battery_soc", "Battery SOC", "%", "battery", "measurement"},
   };
   
   String mac = WiFi.macAddress();
@@ -347,25 +347,25 @@ void publish_home_assistant_discovery() {
 
 String create_json_payload() {
   String json = "{\n";
-  json += " \"pv_voltage\": " + (reg0x3100_success ? String(pv_voltage) : "null") + ",\n";
-  json += " \"pv_current\": " + (reg0x3100_success ? String(pv_current) : "null") + ",\n";
-  json += " \"pv_power\": " + (reg0x3100_success ? String(pv_power) : "null") + ",\n";
-  json += " \"battery_voltage\": " + (reg0x3100_success ? String(battery_voltage) : "null") + ",\n";
-  json += " \"battery_current\": " + (reg0x3100_success ? String(battery_current) : "null") + ",\n";
-  json += " \"battery_power\": " + (reg0x3100_success ? String(battery_power) : "null") + ",\n";
-  json += " \"load_voltage\": " + (reg0x3100_success ? String(load_voltage) : "null") + ",\n";
-  json += " \"load_current\": " + (reg0x3100_success ? String(load_current) : "null") + ",\n";
-  json += " \"load_power\": " + (reg0x3100_success ? String(load_power) : "null") + ",\n";
-  json += " \"battery_charge_power\": " + (reg0x3106_success ? String(battery_charge_power) : "null") + ",\n";
-  json += " \"battery_temperature\": " + (battery_temp != NAN && battery_temp != 0  ? String(battery_temp) : "null") + ",\n";
-  json += " \"battery_soc\": " + (reg0x311A_success ? String(battery_soc) : "null") + ",\n";
+  json += " \"epever_pv_voltage\": " + (reg0x3100_success ? String(pv_voltage) : "null") + ",\n";
+  json += " \"epever_pv_current\": " + (reg0x3100_success ? String(pv_current) : "null") + ",\n";
+  json += " \"epever_pv_power\": " + (reg0x3100_success ? String(pv_power) : "null") + ",\n";
+  json += " \"epever_battery_voltage\": " + (reg0x3100_success ? String(battery_voltage) : "null") + ",\n";
+  json += " \"epever_battery_current\": " + (reg0x3100_success ? String(battery_current) : "null") + ",\n";
+  json += " \"epever_battery_power\": " + (reg0x3100_success ? String(battery_power) : "null") + ",\n";
+  json += " \"epever_load_voltage\": " + (reg0x3100_success ? String(load_voltage) : "null") + ",\n";
+  json += " \"epever_load_current\": " + (reg0x3100_success ? String(load_current) : "null") + ",\n";
+  json += " \"epever_load_power\": " + (reg0x3100_success ? String(load_power) : "null") + ",\n";
+  json += " \"epever_battery_charge_power\": " + (reg0x3106_success ? String(battery_charge_power) : "null") + ",\n";
+  json += " \"epever_battery_temperature\": " + (battery_temp != NAN && battery_temp != 0  ? String(battery_temp) : "null") + ",\n";
+  json += " \"epever_battery_soc\": " + (reg0x311A_success ? String(battery_soc) : "null") + ",\n";
   
-  json += " \"last_3100\": \"" + get_modbus_error_description(reg_0x3100_last_error) + "\",\n";
-  json += " \"last_3106\": \"" + get_modbus_error_description(reg_0x3106_last_error) + "\",\n";
-  json += " \"last_3110\": \"" + get_modbus_error_description(reg_0x3110_last_error) + "\",\n";
-  json += " \"last_311A\": \"" + get_modbus_error_description(reg_0x311a_last_error) + "\",\n";
-  json += " \"last_311B\": \"" + get_modbus_error_description(reg_0x311b_last_error) + "\",\n";
-  json += " \"last_3111\": \"" + get_modbus_error_description(reg_0x3111_last_error) + "\",\n";
+  json += " \"epever_last_3100\": \"" + get_modbus_error_description(reg_0x3100_last_error) + "\",\n";
+  json += " \"epever_last_3106\": \"" + get_modbus_error_description(reg_0x3106_last_error) + "\",\n";
+  json += " \"epever_last_3110\": \"" + get_modbus_error_description(reg_0x3110_last_error) + "\",\n";
+  json += " \"epever_last_311A\": \"" + get_modbus_error_description(reg_0x311a_last_error) + "\",\n";
+  json += " \"epever_last_311B\": \"" + get_modbus_error_description(reg_0x311b_last_error) + "\",\n";
+  json += " \"epever_last_3111\": \"" + get_modbus_error_description(reg_0x3111_last_error) + "\",\n";
   
   
   
@@ -834,7 +834,7 @@ void loop() {
   ArduinoOTA.handle();
   
   
-  if (modbus_last_poll_millis == 0 || (millis() - modbus_last_poll_millis > 1000 * 60)) {
+  if (modbus_last_poll_millis == 0 || (millis() - modbus_last_poll_millis > 1000 * 30)) {
     
     modbus_last_poll_millis = millis();
     uint8_t result;
