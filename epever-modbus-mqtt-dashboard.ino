@@ -303,7 +303,7 @@ void reconnect_to_mqtt() {
 
 void publish_home_assistant_discovery() {
   String topic_prefix = ha_discovery_topic;
-  
+
   struct {
     const char* id;
     const char* name;
@@ -323,12 +323,12 @@ void publish_home_assistant_discovery() {
     {"epever_battery_charge_power", "Battery Charge Power", "W", "power", "measurement"},
     {"epever_battery_temperature", "Battery Temperature", "C", "temperature", "measurement"},
     {"epever_battery_soc", "Battery SOC", "%", "battery", "measurement"},
+    {"epever_wifi", "WiFi Signal", "dBm", "signal_strength", "measurement"}
   };
-  
-  String mac = WiFi.macAddress();
+
   String device_info =
-  "\"device\":{\"identifiers\":[\"" + mac + "\"],\"name\":\"EpEver Solar Monitor\",\"manufacturer\":\"MortyLabs\",\"model\":\"ESP8266 RS485 EPEVER Monitor\"}";
-  
+  "\"device\":{\"identifiers\":[\"EpEverDevice\"],\"name\":\"EpEver Solar Monitor\",\"manufacturer\":\"MortyLabs\",\"model\":\"ESP8266 RS485 EPEVER Monitor\"}";
+
   for (auto& s : sensors) {
     String config = "{\"name\":\"" + String(s.name) +
     "\",\"state_topic\":\"" + String(mqtt_topic) +
@@ -336,12 +336,14 @@ void publish_home_assistant_discovery() {
     "\",\"value_template\":\"{{ value_json." + s.id + " }}\"," +
     "\"device_class\":\"" + s.device_class +
     "\",\"state_class\":\"" + s.state_class + "\"," +
+    "\"unique_id\":\"" + String(s.id) + "\"," +
     device_info + "}";
-    
+
     String discovery_topic = topic_prefix + s.id + "/config";
     mqttClient.publish(discovery_topic.c_str(), config.c_str(), true);
   }
 }
+
 
 
 
@@ -360,12 +362,13 @@ String create_json_payload() {
   json += " \"epever_battery_temperature\": " + (battery_temp != NAN && battery_temp != 0  ? String(battery_temp) : "null") + ",\n";
   json += " \"epever_battery_soc\": " + (reg0x311A_success ? String(battery_soc) : "null") + ",\n";
   
-  json += " \"epever_last_3100\": \"" + get_modbus_error_description(reg_0x3100_last_error) + "\",\n";
-  json += " \"epever_last_3106\": \"" + get_modbus_error_description(reg_0x3106_last_error) + "\",\n";
-  json += " \"epever_last_3110\": \"" + get_modbus_error_description(reg_0x3110_last_error) + "\",\n";
-  json += " \"epever_last_311A\": \"" + get_modbus_error_description(reg_0x311a_last_error) + "\",\n";
-  json += " \"epever_last_311B\": \"" + get_modbus_error_description(reg_0x311b_last_error) + "\",\n";
-  json += " \"epever_last_3111\": \"" + get_modbus_error_description(reg_0x3111_last_error) + "\",\n";
+  json += " \"epever_last_3100\": \"" + String(reg0x3100_success ? "OK" : get_modbus_error_description(reg_0x3100_last_error)) + "\",\n";
+  json += " \"epever_last_3106\": \"" + String(reg0x3106_success ? "OK" : get_modbus_error_description(reg_0x3106_last_error)) + "\",\n";
+  json += " \"epever_last_3110\": \"" + String(reg0x3110_success ? "OK" : get_modbus_error_description(reg_0x3110_last_error)) + "\",\n";
+  json += " \"epever_last_311A\": \"" + String(reg0x311A_success ? "OK" : get_modbus_error_description(reg_0x311a_last_error)) + "\",\n";
+  json += " \"epever_last_311B\": \"" + String(reg0x311B_success ? "OK" : get_modbus_error_description(reg_0x311b_last_error)) + "\",\n";
+  json += " \"epever_last_3111\": \"" + String(reg0x3111_success ? "OK" : get_modbus_error_description(reg_0x3111_last_error)) + "\",\n";
+
   
   
   
