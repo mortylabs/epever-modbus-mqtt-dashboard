@@ -47,6 +47,8 @@
 
 #define FIRMWARE_VERSION "1.0.0"
 
+#define UPTIME_REBOOT_INTERVAL_MS  3600000000UL  // ~41.66 days
+
 // Contains wifi_ssid, wifi_pass, mqtt credentials, hostname, etc.
 #include "secrets.h"
 
@@ -72,6 +74,9 @@
 #define LOAD_POWER_H    0x0F
 
 
+// define modbus error code constants
+#define MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE 255
+#define MODBUS_STATUS_NOT_YET_READ 0xFE
 
 // -----------------------------------------------------------------------------
 // RS485 Polling Stats: Tracks success/failure counts for each Modbus register
@@ -84,8 +89,8 @@ unsigned long reg_0x3106_success_count = 0;
 unsigned long reg_0x3106_fail_count    = 0;
 unsigned long reg_0x3110_success_count = 0;
 unsigned long reg_0x3110_fail_count    = 0;
-unsigned long reg_0x311b_success_count = 0;
-unsigned long reg_0x311b_fail_count    = 0;
+unsigned long reg_0x311B_success_count = 0;
+unsigned long reg_0x311B_fail_count    = 0;
 unsigned long reg_0x3111_success_count = 0;
 unsigned long reg_0x3111_fail_count    = 0;
 
@@ -96,15 +101,15 @@ boolean reg0x311B_success = false;
 boolean reg0x3110_success = false;
 boolean reg0x3111_success = false;
 
-uint8_t reg_0x3100_last_error        =  0;
-uint8_t reg_0x311a_last_error        =  0;
-uint8_t reg_0x3106_last_error        =  0;
-uint8_t reg_0x3110_last_error        =  0;
-uint8_t reg_0x311b_last_error        =  0;
-uint8_t reg_0x3111_last_error        =  0;
+uint8_t reg_0x3100_last_status = MODBUS_STATUS_NOT_YET_READ;
+uint8_t reg_0x311a_last_status = MODBUS_STATUS_NOT_YET_READ;
+uint8_t reg_0x3106_last_status = MODBUS_STATUS_NOT_YET_READ;
+uint8_t reg_0x3110_last_status = MODBUS_STATUS_NOT_YET_READ;
+uint8_t reg_0x311B_last_status = MODBUS_STATUS_NOT_YET_READ;
+uint8_t reg_0x3111_last_status = MODBUS_STATUS_NOT_YET_READ;
 
 
-#define MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE 255
+
 
 
 // -----------------------------------------------------------------------------
@@ -125,7 +130,7 @@ float battery_charge_power, battery_soc, battery_temp;
 unsigned long millis_startup = 0;
 unsigned long modbus_last_poll_millis  = 0;  // last Modbus polling time
 unsigned long modbus_retry_start_millis  = 0;  // Modbus retry timing
-unsigned int ct_mqtt = 0;              // MQTT publish counter
+unsigned long  ct_mqtt = 0;              // MQTT publish counter
 unsigned int mqtt_last_status = 0;     // MQTT status: 1 = success, 0 = fail
 unsigned long mqtt_last_sent_millis = 0;      // Timestamp of last successful MQTT send
 String mqtt_last_payload;              // JSON sent to MQTT last
@@ -362,12 +367,12 @@ String create_json_payload() {
   json += " \"epever_battery_temperature\": " + (battery_temp != NAN && battery_temp != 0  ? String(battery_temp) : "null") + ",\n";
   json += " \"epever_battery_soc\": " + (reg0x311A_success ? String(battery_soc) : "null") + ",\n";
   
-  json += " \"epever_last_3100\": \"" + String(reg0x3100_success ? "OK" : get_modbus_error_description(reg_0x3100_last_error)) + "\",\n";
-  json += " \"epever_last_3106\": \"" + String(reg0x3106_success ? "OK" : get_modbus_error_description(reg_0x3106_last_error)) + "\",\n";
-  json += " \"epever_last_3110\": \"" + String(reg0x3110_success ? "OK" : get_modbus_error_description(reg_0x3110_last_error)) + "\",\n";
-  json += " \"epever_last_311A\": \"" + String(reg0x311A_success ? "OK" : get_modbus_error_description(reg_0x311a_last_error)) + "\",\n";
-  json += " \"epever_last_311B\": \"" + String(reg0x311B_success ? "OK" : get_modbus_error_description(reg_0x311b_last_error)) + "\",\n";
-  json += " \"epever_last_3111\": \"" + String(reg0x3111_success ? "OK" : get_modbus_error_description(reg_0x3111_last_error)) + "\",\n";
+  json += " \"epever_last_3100\": \"" + String(reg0x3100_success ? "OK" : get_modbus_error_description(reg_0x3100_last_status)) + "\",\n";
+  json += " \"epever_last_3106\": \"" + String(reg0x3106_success ? "OK" : get_modbus_error_description(reg_0x3106_last_status)) + "\",\n";
+  json += " \"epever_last_3110\": \"" + String(reg0x3110_success ? "OK" : get_modbus_error_description(reg_0x3110_last_status)) + "\",\n";
+  json += " \"epever_last_311A\": \"" + String(reg0x311A_success ? "OK" : get_modbus_error_description(reg_0x311a_last_status)) + "\",\n";
+  json += " \"epever_last_311B\": \"" + String(reg0x311B_success ? "OK" : get_modbus_error_description(reg_0x311B_last_status)) + "\",\n";
+  json += " \"epever_last_3111\": \"" + String(reg0x3111_success ? "OK" : get_modbus_error_description(reg_0x3111_last_status)) + "\",\n";
 
   
   
@@ -534,6 +539,9 @@ String get_modbus_error_description(uint8_t code) {
     case 0xE4: return "Invalid Response";
     // Custom app-level error code
     case MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE: return "sensor returned 0°C (assumed invalid)";
+    case MODBUS_STATUS_NOT_YET_READ: return "Not yet read";
+
+
     
     default: return "Unknown Error";
   }
@@ -556,16 +564,17 @@ String render_metric_html(const char* label, const char* id, const String& value
 }
 
 
-String render_rs485_html(const String& label, unsigned long success,  unsigned long fail,  uint8_t lastError) {
+String render_rs485_html(const String& label, unsigned long success,  unsigned long fail,  uint8_t lastStatus) {
   String status;
   
   if (fail > 0) {
     // Format error code as 0xE2
-    String hex_code = "0x" + String(lastError, HEX);
+    String hex_code = "0x" + String(lastStatus, HEX);
     hex_code.toUpperCase();
     
     // Format status message
-    String desc = get_modbus_error_description(lastError);
+    String desc = (success ? "OK" : get_modbus_error_description(lastStatus));
+
     status = "<span style='color:#f88; white-space:nowrap;'>" + hex_code + " – " + desc + "</span>";
   } else {
     status = "<span style='color:#8f8;'>OK</span>";
@@ -615,12 +624,12 @@ String render_dashboard_html() {
   
   String rs485 = "<table><tr><th>Register</th><th>Success</th><th>Fail</th><th>Last Status</th></tr>";
   
-  rs485 += render_rs485_html("Battery+PV (0x3100)", reg_0x3100_success_count,  reg_0x3100_fail_count, reg_0x3100_last_error);
-  rs485 += render_rs485_html("Battery SOC (0x311A)", reg_0x311a_success_count, reg_0x311a_fail_count,  reg_0x311a_last_error);
-  rs485 += render_rs485_html("Charge Power (0x3106)", reg_0x3106_success_count, reg_0x3106_fail_count,  reg_0x3106_last_error);
-  rs485 += render_rs485_html("Battery Temp1 (0x311B)", reg_0x311b_success_count, reg_0x311b_fail_count,  reg_0x311b_last_error);
-  rs485 += render_rs485_html("Battery Temp2 (0x3110)", reg_0x3110_success_count, reg_0x3110_fail_count,  reg_0x3110_last_error);
-  rs485 += render_rs485_html("Battery Temp3 (0x3111)", reg_0x3111_success_count, reg_0x3111_fail_count,  reg_0x3111_last_error);
+  rs485 += render_rs485_html("Battery+PV (0x3100)", reg_0x3100_success_count,  reg_0x3100_fail_count, reg_0x3100_last_status);
+  rs485 += render_rs485_html("Battery SOC (0x311A)", reg_0x311a_success_count, reg_0x311a_fail_count,  reg_0x311a_last_status);
+  rs485 += render_rs485_html("Charge Power (0x3106)", reg_0x3106_success_count, reg_0x3106_fail_count,  reg_0x3106_last_status);
+  rs485 += render_rs485_html("Battery Temp1 (0x311B)", reg_0x311B_success_count, reg_0x311B_fail_count,  reg_0x311B_last_status);
+  rs485 += render_rs485_html("Battery Temp2 (0x3110)", reg_0x3110_success_count, reg_0x3110_fail_count,  reg_0x3110_last_status);
+  rs485 += render_rs485_html("Battery Temp3 (0x3111)", reg_0x3111_success_count, reg_0x3111_fail_count,  reg_0x3111_last_status);
   rs485 += "</table>";
   
   
@@ -828,8 +837,8 @@ void loop() {
   }
   
   
-  // Restart if no success transmittion in 5  mins
-  if (millis_last_success + (1000 * 60 * 5) < millis() ) {
+  // Restart if no success transmittion in 5  mins, or uptime > 41 days
+  if (millis_last_success + (1000 * 60 * 5) < millis() || millis() - millis_startup > UPTIME_REBOOT_INTERVAL_MS ) {
     ESP.restart();
   }
   
@@ -852,50 +861,46 @@ void loop() {
     load_power = NAN;
 
     // Read 16 registers starting at 0x3100)
-    result = read_modbus_registers_with_retry(0x3100, 16);
     reg0x3100_success = false;
+    result = read_modbus_registers_with_retry(0x3100, 16);
     if (result == node.ku8MBSuccess) {
-      reg_0x3100_success_count += 1;
       pv_voltage = node.getResponseBuffer(PANEL_VOLTS) / 100.0f;
-      reg0x3100_success = true;
-      
       pv_current = node.getResponseBuffer(PANEL_AMPS) / 100.0f;
       pv_power = (node.getResponseBuffer(PANEL_POWER_L) |
       (node.getResponseBuffer(PANEL_POWER_H) << 8)) / 100.0f;
       
       battery_voltage = node.getResponseBuffer(BATT_VOLTS) / 100.0f;
-      
       battery_current = node.getResponseBuffer(BATT_AMPS) / 100.0f;
-      
       battery_power = (node.getResponseBuffer(BATT_POWER_L) |
       (node.getResponseBuffer(BATT_POWER_H) << 8)) / 100.0f;
       
       load_voltage = node.getResponseBuffer(LOAD_VOLTS) / 100.0f;
-      
       load_current = node.getResponseBuffer(LOAD_AMPS) / 100.0f;
-      
       load_power = (node.getResponseBuffer(LOAD_POWER_L) |
       (node.getResponseBuffer(LOAD_POWER_H) << 8)) / 100.0f;
       
+      reg_0x3100_success_count++;
+      reg0x3100_success = true;
+      reg_0x3100_last_status = 0x00; // OK
       
     } else {
       reg_0x3100_fail_count += 1;
-      reg_0x3100_last_error = result;
+      reg_0x3100_last_status = result;
     }
     
     
     battery_charge_power = NAN;
-    result = read_modbus_registers_with_retry(0x3106, 2);
-    
     reg0x3106_success = false;
+    result = read_modbus_registers_with_retry(0x3106, 2);
     if (result == node.ku8MBSuccess) {
-      reg0x3106_success = true;
-      reg_0x3106_success_count = reg_0x3106_success_count + 1;
       battery_charge_power = (node.getResponseBuffer(0x00) | node.getResponseBuffer(0x01) << 16)  / 100.0f;
+      reg0x3106_success = true;
+      reg_0x3106_success_count++; 
+      reg_0x3106_last_status = 0x00;
       
     } else {
-      reg_0x3106_fail_count += 1;
-      reg_0x3106_last_error = result;
+      reg_0x3106_fail_count++; 
+      reg_0x3106_last_status = result;
     }
     
     
@@ -911,18 +916,19 @@ void loop() {
       
       if (battery_temp  != 0) {
         reg0x311B_success = true;
-        reg_0x311b_success_count++;
+        reg_0x311B_success_count++;
         battery_temp_source = "0x311B";
+        reg_0x311B_last_status = 0x00;
         
       } else {
-        reg_0x311b_last_error = MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE;
-        reg_0x311b_fail_count++;
+        reg_0x311B_last_status = MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE;
+        reg_0x311B_fail_count++;
         
       }
       
     } else  {
-      reg_0x311b_fail_count++;
-      reg_0x311b_last_error = MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE;
+      reg_0x311B_fail_count++;
+      reg_0x311B_last_status = MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE;
       
     }
     
@@ -935,16 +941,17 @@ void loop() {
           reg0x3110_success = true;
           reg_0x3110_success_count++;
           battery_temp_source = "0x3110";
+          reg_0x3110_last_status = 0x00;
           
           
         }  else {
-          reg_0x3110_last_error = MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE; //"Success but 0C temp";
+          reg_0x3110_last_status = MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE; //"Success but 0C temp";
           reg_0x3110_fail_count++;
         }
       }
       else  {
         reg_0x3110_fail_count += 1;
-        reg_0x3110_last_error = result;
+        reg_0x3110_last_status = result;
         
         if (battery_temp == 0 or !reg0x3110_success) {
           result = read_modbus_registers_with_retry(0x3111, 2);
@@ -954,9 +961,10 @@ void loop() {
             battery_temp_source = "0x3111";
             uint16_t raw = node.getResponseBuffer(0);
             battery_temp = (raw >> 4) & 0x0F; // Extract temp bits from BATTERY_STATUS
+            reg_0x3111_last_status = 0x00;
           } else {
             reg_0x3111_fail_count++;
-            reg_0x3111_last_error = result;
+            reg_0x3111_last_status = result;
           }
         }
       }
@@ -972,9 +980,10 @@ void loop() {
       reg0x311A_success = true;
       reg_0x311a_success_count = reg_0x311a_success_count + 1;
       battery_soc = node.getResponseBuffer(0x00);
+      reg_0x311a_last_status = 0x00;
     } else  {
       reg_0x311a_fail_count = reg_0x311a_fail_count + 1;
-      reg_0x311a_last_error = result;
+      reg_0x311a_last_status = result;
     }
 
     if (!mqttClient.connected()) {
