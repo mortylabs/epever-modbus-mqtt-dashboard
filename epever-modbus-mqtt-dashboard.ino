@@ -566,18 +566,14 @@ String render_metric_html(const char* label, const char* id, const String& value
 
 String render_rs485_html(const String& label, unsigned long success,  unsigned long fail,  uint8_t lastStatus) {
   String status;
-  
-  if (fail > 0) {
-    // Format error code as 0xE2
-    String hex_code = "0x" + String(lastStatus, HEX);
-    hex_code.toUpperCase();
+  String hex_code = "0x" + String(lastStatus, HEX);
+  hex_code.toUpperCase();
     
-    // Format status message
-    String desc = (success ? "OK" : get_modbus_error_description(lastStatus));
-
-    status = "<span style='color:#f88; white-space:nowrap;'>" + hex_code + " – " + desc + "</span>";
+  // Format status message
+  if (lastStatus == 0x00) {
+      status = "<span style='color:#8f8;'>OK</span>";
   } else {
-    status = "<span style='color:#8f8;'>OK</span>";
+  status = "<span style='color:#f88; white-space:nowrap;'>" + hex_code + " – " + get_modbus_error_description(lastStatus)  + "</span>";
   }
   
   return "<tr>"
