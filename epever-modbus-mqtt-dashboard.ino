@@ -2,7 +2,7 @@
  * @file EpEverSolarMonitor.ino
  * @brief Monitor and report EpEver solar charger metrics via RS485, MQTT, and HTTP.
  * @author Andrew Morty
- * @version 1.0.0
+ * @version 1.0.2
  * @license MIT
  *
  * This project reads data from an EpEver charge controller using Modbus RTU over RS485,
@@ -27,10 +27,10 @@
      RS485MAX RE   -> D1
      RS485MAX VCC  -> NodeMCU 3v
      RS485MAX G    -> Node MCU G (also ground the ethernet cable brown)
- 
+
  */
 
-
+#include <cmath>
 #include <ArduinoOTA.h>
 #include <ESP8266HTTPClient.h>
 #include <ESP8266WebServer.h>
@@ -40,12 +40,11 @@
 #include <PubSubClient.h>
 #include <SoftwareSerial.h>
 
-
 // ============================================================================
 // GLOBAL DECLARATIONS / CONSTANTS
 // ============================================================================
 
-#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION "1.0.3"
 
 #define UPTIME_REBOOT_INTERVAL_MS  3600000000UL  // ~41.66 days
 
@@ -72,7 +71,6 @@
 #define LOAD_AMPS       0x0D
 #define LOAD_POWER_L    0x0E
 #define LOAD_POWER_H    0x0F
-
 
 // define modbus error code constants
 #define MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE 255
@@ -108,10 +106,6 @@ uint8_t reg_0x3110_last_status = MODBUS_STATUS_NOT_YET_READ;
 uint8_t reg_0x311B_last_status = MODBUS_STATUS_NOT_YET_READ;
 uint8_t reg_0x3111_last_status = MODBUS_STATUS_NOT_YET_READ;
 
-
-
-
-
 // -----------------------------------------------------------------------------
 // Solar Metrics: These values reflect real-time readings from the charge controller
 // -----------------------------------------------------------------------------
@@ -120,9 +114,6 @@ float pv_voltage, pv_current, pv_power;         // PV panel metrics
 float battery_voltage, battery_current, battery_power;
 float load_voltage, load_current, load_power;
 float battery_charge_power, battery_soc, battery_temp;
-
-
-
 
 // -----------------------------------------------------------------------------
 // Runtime Counters: Track system state and timings (Wi-Fi, Modbus, MQTT, etc.)
@@ -136,18 +127,33 @@ unsigned long mqtt_last_sent_millis = 0;      // Timestamp of last successful MQ
 String mqtt_last_payload;              // JSON sent to MQTT last
 unsigned long millis_last_success = 0;  // last successful rs485 read of registers
 bool ha_discovery_sent = false;         // home assistant discovery
+unsigned long ha_discovery_last_attempt = 0;
 String battery_temp_source = "none";
+
+// Last successful Modbus reads, independently tracked by register group.
+// Measurements stay cached through transient failures, but HA availability expires.
+const unsigned long SENSOR_STALE_TIMEOUT_MS = 120000UL;
+unsigned long last_3100_success_ms = 0;
+unsigned long last_3106_success_ms = 0;
+unsigned long last_311A_success_ms = 0;
+unsigned long last_temperature_success_ms = 0;
+bool has_3100_sample = false;
+bool has_3106_sample = false;
+bool has_311A_sample = false;
+bool has_temperature_sample = false;
+
+// millis() subtraction is rollover-safe. Never mark an unread sensor available.
+bool sample_fresh(bool has_sample, unsigned long last_success) {
+  return has_sample && ((unsigned long)(millis() - last_success) < SENSOR_STALE_TIMEOUT_MS);
+}
 
 
 // === HTML Footer with Version and Timestamp ===
 const char* footer_html =
 "<div style='margin-top:2rem;font-size:0.75rem;color:#777;text-align:center;'>"
 "Morty Labs solar charger firmware v" FIRMWARE_VERSION
-" &mdash; compiled " __DATE__ " " __TIME__
+" — compiled " __DATE__ " " __TIME__
 "</div>";
-
-
-
 
 String ota_status              = "none";
 
@@ -156,14 +162,21 @@ SoftwareSerial RS485Serial(RX, TX);   // RX, TX
 ESP8266WebServer server(80);          // Create a webserver object that listens for HTTP request on port 80
 ESP8266WiFiMulti wifiMulti;           // Create an instance of the ESP8266WiFiMulti class, called 'wifiMulti'
 
-
 WiFiClient    espClient;
 PubSubClient  mqttClient(espClient);
 
+// Each group has an independent MQTT availability topic, retained by the broker.
+bool publish_group_availability(const char* group, bool fresh) {
+  String topic = String(mqtt_topic) + "/availability/" + group;
+  return mqttClient.publish(topic.c_str(), fresh ? "online" : "offline", true);
+}
 
+
+
+void reconnect_to_mqtt();
+bool publish_home_assistant_discovery();
 void handle_not_found();
 void handle_restart();                 // function prototypes for HTTP handlers
-
 
 // ============================================================================
 // HELPER FUNCTIONS
@@ -175,7 +188,7 @@ String get_uptime (unsigned long my_millis) {
   unsigned long mins         = secs_elapsed / 60.00 - hours * 60;
   unsigned long secs         = secs_elapsed - hours * 60 * 60 - mins * 60;
   String up_time             = "";
-  
+
   if (hours < 10) {
     up_time += "0";
   }
@@ -191,9 +204,8 @@ String get_uptime (unsigned long my_millis) {
   }
   up_time = up_time + secs;
   return up_time;
-  
-}
 
+}
 
 String get_elapsed(unsigned long last, unsigned long count) {
   if (count == 0) return "-";
@@ -202,7 +214,6 @@ String get_elapsed(unsigned long last, unsigned long count) {
   snprintf(buf, sizeof(buf), "%02lu:%02lu:%02lu", delta / 3600, (delta / 60) % 60, delta % 60);
   return String(buf);
 }
-
 
 // ============================================================================
 // RS485 TRANSMISSION HOOKS / MODBUS
@@ -215,7 +226,6 @@ void pre_transmission()
   delayMicroseconds(50);  // Allow line to settle before transmitting
 }
 
-
 void post_transmission()
 {
   delayMicroseconds(50);  // Wait before switching to receive
@@ -223,13 +233,11 @@ void post_transmission()
   digitalWrite(MAX485_DE, LOW);
 }
 
-
-
 int read_modbus_registers_with_retry (unsigned long address, unsigned int address_len) {
   modbus_retry_start_millis = millis();  // Start timer
   uint8_t result = 0xFF;  // Assume failure initially
   node.clearResponseBuffer();
-  
+
   while ((result != node.ku8MBSuccess) && (millis() - modbus_retry_start_millis < 800)) {
     //rs485_transmit_mode();
     result = node.readInputRegisters(address, address_len);  // Automatically calls pre/post hooks
@@ -241,11 +249,9 @@ int read_modbus_registers_with_retry (unsigned long address, unsigned int addres
     delay(50);  // Give the bus a moment before retrying
     yield();    // Let Wi-Fi, OTA, and watchdog breathe
   }
-  
+
   return result;
 }
-
-
 
 // ============================================================================
 // MQTT / WIFI FUNCTIONS
@@ -277,36 +283,36 @@ void connect_to_wifi() {
       digitalWrite(HB, LOW);
     }
   }
-  
+
   digitalWrite(HB, HIGH);
-  
-  mqttClient.setBufferSize(1024);
+
+  mqttClient.setBufferSize(2048);
   mqttClient.setServer(mqtt_server, mqtt_port);
   mqttClient.setCallback(on_mqtt_message_received);
   if (!mqttClient.connected()) {
     reconnect_to_mqtt();
   }
-  
-}
 
+}
 
 void reconnect_to_mqtt() {
   unsigned long millis_mqtt_started = millis();
-  while (!mqttClient.connected() and (millis() - millis_mqtt_started <= 10E3)) {
+  while (!mqttClient.connected() && (millis() - millis_mqtt_started <= 10000UL)) {
     //Serial.print("Attempting MQTT connection...");
-    if (mqttClient.connect( hostname, mqtt_user, mqtt_pass)) {
-      if (!ha_discovery_sent) {
-        publish_home_assistant_discovery();
-        ha_discovery_sent = true;
-        delay(20);
-      }
+    if (mqttClient.connect(hostname, mqtt_user, mqtt_pass)) {
+      // Retained discovery messages are safely republished after reconnects.
+      ha_discovery_last_attempt = millis();
+      ha_discovery_sent = publish_home_assistant_discovery();
+      delay(20);
     } else {
       delay(200);
     }
   }
 }
 
-void publish_home_assistant_discovery() {
+bool publish_home_assistant_discovery() {
+  if (!mqttClient.connected()) return false;
+  bool all_published = true;
   String topic_prefix = ha_discovery_topic;
 
   struct {
@@ -315,20 +321,21 @@ void publish_home_assistant_discovery() {
     const char* unit;
     const char* device_class;
     const char* state_class;
+    const char* group;
   } sensors[] = {
-    {"epever_pv_voltage", "PV Voltage", "V", "voltage", "measurement"},
-    {"epever_pv_current", "PV Current", "A", "current", "measurement"},
-    {"epever_pv_power",   "PV Power",   "W", "power",   "measurement"},
-    {"epever_battery_voltage", "Battery Voltage", "V", "voltage", "measurement"},
-    {"epever_battery_current", "Battery Current", "A", "current", "measurement"},
-    {"epever_battery_power",   "Battery Power",   "W", "power",   "measurement"},
-    {"epever_load_voltage", "Load Voltage", "V", "voltage", "measurement"},
-    {"epever_load_current", "Load Current", "A", "current", "measurement"},
-    {"epever_load_power",   "Load Power",   "W", "power",   "measurement"},
-    {"epever_battery_charge_power", "Battery Charge Power", "W", "power", "measurement"},
-    {"epever_battery_temperature", "Battery Temperature", "C", "temperature", "measurement"},
-    {"epever_battery_soc", "Battery SOC", "%", "battery", "measurement"},
-    {"epever_wifi", "WiFi Signal", "dBm", "signal_strength", "measurement"}
+    {"epever_pv_voltage", "PV Voltage", "V", "voltage", "measurement", "3100"},
+    {"epever_pv_current", "PV Current", "A", "current", "measurement", "3100"},
+    {"epever_pv_power", "PV Power", "W", "power", "measurement", "3100"},
+    {"epever_battery_voltage", "Battery Voltage", "V", "voltage", "measurement", "3100"},
+    {"epever_battery_current", "Battery Current", "A", "current", "measurement", "3100"},
+    {"epever_battery_power", "Battery Power", "W", "power", "measurement", "3100"},
+    {"epever_load_voltage", "Load Voltage", "V", "voltage", "measurement", "3100"},
+    {"epever_load_current", "Load Current", "A", "current", "measurement", "3100"},
+    {"epever_load_power", "Load Power", "W", "power", "measurement", "3100"},
+    {"epever_battery_charge_power", "Battery Charge Power", "W", "power", "measurement", "3106"},
+    {"epever_battery_temperature", "Battery Temperature", "\xC2\xB0" "C", "temperature", "measurement", "temperature"},
+    {"epever_battery_soc", "Battery SOC", "%", "battery", "measurement", "311A"},
+    {"epever_rssi", "WiFi Signal", "dBm", "signal_strength", "measurement", nullptr}
   };
 
   String device_info =
@@ -338,35 +345,38 @@ void publish_home_assistant_discovery() {
     String config = "{\"name\":\"" + String(s.name) +
     "\",\"state_topic\":\"" + String(mqtt_topic) +
     "\",\"unit_of_measurement\":\"" + s.unit +
-    "\",\"value_template\":\"{{ value_json." + s.id + " }}\"," +
+    "\",\"value_template\":\"{{ value_json." + s.id + " | default(None) }}\"," +
     "\"device_class\":\"" + s.device_class +
     "\",\"state_class\":\"" + s.state_class + "\"," +
     "\"unique_id\":\"" + String(s.id) + "\"," +
+    (s.group ? "\"availability_topic\":\"" + String(mqtt_topic) + "/availability/" + s.group + "\"," : String("")) +
     device_info + "}";
 
     String discovery_topic = topic_prefix + s.id + "/config";
-    mqttClient.publish(discovery_topic.c_str(), config.c_str(), true);
+    if (!mqttClient.publish(discovery_topic.c_str(), config.c_str(), true)) {
+      all_published = false;
+    }
+    mqttClient.loop();
+    yield();
   }
+  return all_published;
 }
-
-
-
 
 String create_json_payload() {
   String json = "{\n";
-  json += " \"epever_pv_voltage\": " + (reg0x3100_success ? String(pv_voltage) : "null") + ",\n";
-  json += " \"epever_pv_current\": " + (reg0x3100_success ? String(pv_current) : "null") + ",\n";
-  json += " \"epever_pv_power\": " + (reg0x3100_success ? String(pv_power) : "null") + ",\n";
-  json += " \"epever_battery_voltage\": " + (reg0x3100_success ? String(battery_voltage) : "null") + ",\n";
-  json += " \"epever_battery_current\": " + (reg0x3100_success ? String(battery_current) : "null") + ",\n";
-  json += " \"epever_battery_power\": " + (reg0x3100_success ? String(battery_power) : "null") + ",\n";
-  json += " \"epever_load_voltage\": " + (reg0x3100_success ? String(load_voltage) : "null") + ",\n";
-  json += " \"epever_load_current\": " + (reg0x3100_success ? String(load_current) : "null") + ",\n";
-  json += " \"epever_load_power\": " + (reg0x3100_success ? String(load_power) : "null") + ",\n";
-  json += " \"epever_battery_charge_power\": " + (reg0x3106_success ? String(battery_charge_power) : "null") + ",\n";
-  json += " \"epever_battery_temperature\": " + (battery_temp != NAN && battery_temp != 0  ? String(battery_temp) : "null") + ",\n";
-  json += " \"epever_battery_soc\": " + (reg0x311A_success ? String(battery_soc) : "null") + ",\n";
-  
+  json += " \"epever_pv_voltage\": " + (has_3100_sample && std::isfinite(pv_voltage) ? String(pv_voltage) : "null") + ",\n";
+  json += " \"epever_pv_current\": " + (has_3100_sample && std::isfinite(pv_current) ? String(pv_current) : "null") + ",\n";
+  json += " \"epever_pv_power\": " + (has_3100_sample && std::isfinite(pv_power) ? String(pv_power) : "null") + ",\n";
+  json += " \"epever_battery_voltage\": " + (has_3100_sample && std::isfinite(battery_voltage) ? String(battery_voltage) : "null") + ",\n";
+  json += " \"epever_battery_current\": " + (has_3100_sample && std::isfinite(battery_current) ? String(battery_current) : "null") + ",\n";
+  json += " \"epever_battery_power\": " + (has_3100_sample && std::isfinite(battery_power) ? String(battery_power) : "null") + ",\n";
+  json += " \"epever_load_voltage\": " + (has_3100_sample && std::isfinite(load_voltage) ? String(load_voltage) : "null") + ",\n";
+  json += " \"epever_load_current\": " + (has_3100_sample && std::isfinite(load_current) ? String(load_current) : "null") + ",\n";
+  json += " \"epever_load_power\": " + (has_3100_sample && std::isfinite(load_power) ? String(load_power) : "null") + ",\n";
+  json += " \"epever_battery_charge_power\": " + (has_3106_sample && std::isfinite(battery_charge_power) ? String(battery_charge_power) : "null") + ",\n";
+  json += " \"epever_battery_temperature\": " + (has_temperature_sample && std::isfinite(battery_temp) ? String(battery_temp) : "null") + ",\n";
+  json += " \"epever_battery_soc\": " + (has_311A_sample && std::isfinite(battery_soc) ? String(battery_soc) : "null") + ",\n";
+
   json += " \"epever_last_3100\": \"" + String(reg0x3100_success ? "OK" : get_modbus_error_description(reg_0x3100_last_status)) + "\",\n";
   json += " \"epever_last_3106\": \"" + String(reg0x3106_success ? "OK" : get_modbus_error_description(reg_0x3106_last_status)) + "\",\n";
   json += " \"epever_last_3110\": \"" + String(reg0x3110_success ? "OK" : get_modbus_error_description(reg_0x3110_last_status)) + "\",\n";
@@ -374,20 +384,19 @@ String create_json_payload() {
   json += " \"epever_last_311B\": \"" + String(reg0x311B_success ? "OK" : get_modbus_error_description(reg_0x311B_last_status)) + "\",\n";
   json += " \"epever_last_3111\": \"" + String(reg0x3111_success ? "OK" : get_modbus_error_description(reg_0x3111_last_status)) + "\",\n";
 
-  
-  
-  
-  json += " \"RSSI\": " + String(WiFi.RSSI()) + ",\n";
-  json += " \"MAC\": \"" + WiFi.macAddress() + "\",\n";
-  json += " \"firmware_version\": \"" + String(FIRMWARE_VERSION) + "\"\n";
-  
+  // Diagnostic flags remain visible even when HA marks a measurement unavailable.
+  json += " \"epever_3100_fresh\": " + String(sample_fresh(has_3100_sample, last_3100_success_ms) ? "true" : "false") + ",\n";
+  json += " \"epever_3106_fresh\": " + String(sample_fresh(has_3106_sample, last_3106_success_ms) ? "true" : "false") + ",\n";
+  json += " \"epever_311A_fresh\": " + String(sample_fresh(has_311A_sample, last_311A_success_ms) ? "true" : "false") + ",\n";
+  json += " \"epever_temperature_fresh\": " + String(sample_fresh(has_temperature_sample, last_temperature_success_ms) ? "true" : "false") + ",\n";
+  json += " \"epever_rssi\": " + String(WiFi.RSSI()) + ",\n";
+  json += " \"epever_mac\": \"" + WiFi.macAddress() + "\",\n";
+  json += " \"epever_firmware_version\": \"" + String(FIRMWARE_VERSION) + "\"\n";
+
   json += "}";
   mqtt_last_payload = json;
   return json;
 }
-
-
-
 
 // ============================================================================
 // HTTP / WEB RENDERING
@@ -516,7 +525,6 @@ th {
 </html>
 )rawliteral";
 
-
 String get_modbus_error_description(uint8_t code) {
   switch (code) {
     case 0x00: return "OK";
@@ -527,10 +535,10 @@ String get_modbus_error_description(uint8_t code) {
     case 0x05: return "Acknowledge";
     case 0x06: return "Slave Device Busy";
     case 0x08: return "Memory Parity Error";
-    
+
     case 0x0A: return "Gateway Path Unavailable";
     case 0x0B: return "Gateway Target Device Failed to Respond";
-    
+
     // ModbusMaster-specific error codes
     case 0xE0: return "Invalid Slave ID";
     case 0xE1: return "Invalid Function";
@@ -541,17 +549,13 @@ String get_modbus_error_description(uint8_t code) {
     case MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE: return "sensor returned 0°C (assumed invalid)";
     case MODBUS_STATUS_NOT_YET_READ: return "Not yet read";
 
-
-    
     default: return "Unknown Error";
   }
 }
 
-
 String metric_style(bool success) {
   return success ? "'value'" : "'value' style=\"color:#f88;\"";
 }
-
 
 String render_metric_html(const char* label, const char* id, const String& value, bool success, String subtext = "") {
   String display_value = value;
@@ -563,19 +567,18 @@ String render_metric_html(const char* label, const char* id, const String& value
   return "<div class='metric'><label>" + String(display_label) + "</label><span class=" + metric_style(success) + " id='" + id + "'>" + display_value + "</span></div>";
 }
 
-
 String render_rs485_html(const String& label, unsigned long success,  unsigned long fail,  uint8_t lastStatus) {
   String status;
   String hex_code = "0x" + String(lastStatus, HEX);
   hex_code.toUpperCase();
-    
+
   // Format status message
   if (lastStatus == 0x00) {
       status = "<span style='color:#8f8;'>OK</span>";
   } else {
   status = "<span style='color:#f88; white-space:nowrap;'>" + hex_code + " – " + get_modbus_error_description(lastStatus)  + "</span>";
   }
-  
+
   return "<tr>"
   "<td style='white-space:nowrap;'>" + label + "</td>"
   "<td class='success-count'>" + String(success) + "</td>"
@@ -584,11 +587,9 @@ String render_rs485_html(const String& label, unsigned long success,  unsigned l
   "</tr>";
 }
 
-
 String render_dashboard_html() {
   String page = FPSTR(html_template);
-  
-  
+
   String battery_temp_src_subtext;
   String battery_temp_src_subtext_colour = "grey";
   if (battery_temp_source == "0x311B") {
@@ -600,7 +601,7 @@ String render_dashboard_html() {
     battery_temp_src_subtext_colour = "red";
   }
   battery_temp_src_subtext = " <span style='color:"+battery_temp_src_subtext_colour+"; font-size:smaller'>" + battery_temp_source + "</span>";
-  
+
   String solar = "";
   solar += render_metric_html("Panel Voltage", "pv_voltage", String(pv_voltage) + " V", reg0x3100_success);
   solar += render_metric_html("Panel Current", "pv_current", String(pv_current) + " A", reg0x3100_success);
@@ -612,14 +613,13 @@ String render_dashboard_html() {
   solar += render_metric_html("Load Current", "load_current", String(load_current) + " A", reg0x3100_success);
   solar += render_metric_html("Load Power", "load_power", String(load_power) + " W", reg0x3100_success);
   solar += render_metric_html("Battery Charge Power", "batt_charge_power", String(battery_charge_power) + " W", reg0x3106_success);
-  solar += render_metric_html("Battery Temp C", "battery_temp", String(battery_temp) + " C", (battery_temp != NAN && battery_temp != 0), battery_temp_src_subtext);
+  solar += render_metric_html("Battery Temp C", "battery_temp", String(battery_temp) + " C", (!isnan(battery_temp) && battery_temp != 0), battery_temp_src_subtext);
   solar += render_metric_html("Battery SOC", "battery_soc", String(battery_soc) + " %", reg0x311A_success);
   solar += render_metric_html("Uptime", "uptime", get_uptime(millis_startup), true);
   //solar += render_metric_html("Last Poll", "last_poll", get_timestamp(millis_last_success), true);
-  
-  
+
   String rs485 = "<table><tr><th>Register</th><th>Success</th><th>Fail</th><th>Last Status</th></tr>";
-  
+
   rs485 += render_rs485_html("Battery+PV (0x3100)", reg_0x3100_success_count,  reg_0x3100_fail_count, reg_0x3100_last_status);
   rs485 += render_rs485_html("Battery SOC (0x311A)", reg_0x311a_success_count, reg_0x311a_fail_count,  reg_0x311a_last_status);
   rs485 += render_rs485_html("Charge Power (0x3106)", reg_0x3106_success_count, reg_0x3106_fail_count,  reg_0x3106_last_status);
@@ -627,26 +627,22 @@ String render_dashboard_html() {
   rs485 += render_rs485_html("Battery Temp2 (0x3110)", reg_0x3110_success_count, reg_0x3110_fail_count,  reg_0x3110_last_status);
   rs485 += render_rs485_html("Battery Temp3 (0x3111)", reg_0x3111_success_count, reg_0x3111_fail_count,  reg_0x3111_last_status);
   rs485 += "</table>";
-  
-  
+
   String mqtt = "<div class='mqtt-section'>";
   mqtt += "<div class='mqtt-row'><label>Last Payload:</label><span class='mqtt-value'>" + String(mqtt_last_status ? "✅ Success" : "❌ Fail") + " (" + get_elapsed(mqtt_last_sent_millis, 1) + " ago)</span></div>";
   mqtt += "<div class='mqtt-row'><pre class='mqtt-payload'>" + mqtt_last_payload + "</pre></div>";
-  
+
   mqtt += "</div>";
   mqtt += "<div class='mqtt-row'><a href='/firmware' class='upload-btn'>Upload Firmware</a></div>";
   mqtt += "<div class='mqtt-row'><a href='/reboot' class='upload-btn'>Reboot</a></div>";
-  
-  
+
   page.replace("{{solar_status}}", solar);
   page.replace("{{rs485_stats}}", rs485);
   page.replace("{{mqtt_status}}", mqtt);
   page += footer_html;
-  
-  
+
   return page;
 }
-
 
 void handle_firmware_upload() {
   HTTPUpload& upload = server.upload();
@@ -710,9 +706,6 @@ void serve_firmware_form() {
   "</body></html>");
 }
 
-
-
-
 void handle_restart() {
   server.send(200, "text/html",
     "<html><head>"
@@ -727,17 +720,13 @@ void handle_restart() {
   ESP.restart();
 }
 
-
 void handle_not_found() {
   server.send(404, "text/plain", "Ungaas baba, I 404 you."); // Send HTTP status 404 (Not Found) when there's no handler for the URI in the request
 }
 
-
-
 // ============================================================================
 // CORE ARDUINO
 // ============================================================================
-
 
 void setup()
 {
@@ -745,43 +734,50 @@ void setup()
   pinMode(MAX485_RE, OUTPUT);
   pinMode(MAX485_DE, OUTPUT);
   // Init in receive mode
-  
-  
+
   delay(100);
-  
+
   Serial.begin(115200);
   delay(200);
   while (!Serial) {
     delay(1);
   }
-  
-  
+
   wifiMulti.addAP(wifi_ssid, wifi_pass);   // add Wi-Fi networks you want to connect to
   connect_to_wifi();
-  
+
   RS485Serial.begin(115200);
   node.begin(1, RS485Serial);
   //node.begin(1, Serial);
-  
+
   //  Callbacks
   node.preTransmission(pre_transmission);
   node.postTransmission(post_transmission);
-  
+
   server.on("/", []() {server.send(200, "text/html",  render_dashboard_html());});
-  
+
   server.on("/json", []() {
     server.send(200, "application/json", create_json_payload());
   });
-  
-  
+
+  // Allow upload of the compiled .bin from the built-in web dashboard.
+  server.on("/firmware", HTTP_GET, serve_firmware_form);
+  server.on("/firmware", HTTP_POST, []() {
+    bool ok = !Update.hasError();
+    server.send(ok ? 200 : 500, "text/plain", ok ? "Update complete. Rebooting." : "Firmware update failed.");
+    if (ok) {
+      delay(500);
+      ESP.restart();
+    }
+  }, handle_firmware_upload);
   server.on("/reboot", handle_restart);
-  
+
   server.onNotFound(handle_not_found);        // When a client requests an unknown URI (i.e. something other than "/"), call function "handle_not_found"
   server.begin();                           // Actually start the server
-  
+
   ArduinoOTA.setHostname(hostname);
   ArduinoOTA.setPassword(ota_pass);
-  
+
   ArduinoOTA.onStart([]() {
     ota_status = "starting";
   });
@@ -812,49 +808,39 @@ void setup()
       ota_status = "End failed";
     }
   });
-  
+
   ArduinoOTA.begin();
   ota_status = "OTA ready";
   millis_startup = millis();
 }
 
-
-
-
-
-
-
-
-
-
 void loop() {
   if (WiFi.status() != WL_CONNECTED) {
     connect_to_wifi();
   }
-  
-  
+
   // Restart if no success transmittion in 5  mins, or uptime > 41 days
   if (millis_last_success + (1000 * 60 * 5) < millis() || millis() - millis_startup > UPTIME_REBOOT_INTERVAL_MS ) {
     ESP.restart();
   }
-  
+
   server.handleClient();                    // Listen for HTTP requests from clients
   ArduinoOTA.handle();
-  
-  
+  if (mqttClient.connected()) {
+    mqttClient.loop();
+    if (!ha_discovery_sent &&
+        (ha_discovery_last_attempt == 0 || millis() - ha_discovery_last_attempt >= 30000UL)) {
+      ha_discovery_last_attempt = millis();
+      ha_discovery_sent = publish_home_assistant_discovery();
+    }
+  } else {
+    ha_discovery_sent = false;
+  }
+
   if (modbus_last_poll_millis == 0 || (millis() - modbus_last_poll_millis > 1000 * 30)) {
-    
+
     modbus_last_poll_millis = millis();
     uint8_t result;
-    pv_voltage = NAN;
-    pv_current = NAN;
-    pv_power = NAN;
-    battery_voltage = NAN;
-    battery_current = NAN;
-    battery_power = NAN;
-    load_voltage = NAN;
-    load_current = NAN;
-    load_power = NAN;
 
     // Read 16 registers starting at 0x3100)
     reg0x3100_success = false;
@@ -864,70 +850,74 @@ void loop() {
       pv_current = node.getResponseBuffer(PANEL_AMPS) / 100.0f;
       pv_power = (node.getResponseBuffer(PANEL_POWER_L) |
       (node.getResponseBuffer(PANEL_POWER_H) << 8)) / 100.0f;
-      
+
       battery_voltage = node.getResponseBuffer(BATT_VOLTS) / 100.0f;
       battery_current = node.getResponseBuffer(BATT_AMPS) / 100.0f;
       battery_power = (node.getResponseBuffer(BATT_POWER_L) |
       (node.getResponseBuffer(BATT_POWER_H) << 8)) / 100.0f;
-      
+
       load_voltage = node.getResponseBuffer(LOAD_VOLTS) / 100.0f;
       load_current = node.getResponseBuffer(LOAD_AMPS) / 100.0f;
       load_power = (node.getResponseBuffer(LOAD_POWER_L) |
       (node.getResponseBuffer(LOAD_POWER_H) << 8)) / 100.0f;
-      
+
       reg_0x3100_success_count++;
       reg0x3100_success = true;
+      has_3100_sample = true;
+      last_3100_success_ms = millis();
       reg_0x3100_last_status = 0x00; // OK
-      
+
     } else {
       reg_0x3100_fail_count += 1;
       reg_0x3100_last_status = result;
     }
-    
-    
-    battery_charge_power = NAN;
+
     reg0x3106_success = false;
     result = read_modbus_registers_with_retry(0x3106, 2);
     if (result == node.ku8MBSuccess) {
       battery_charge_power = (node.getResponseBuffer(0x00) | node.getResponseBuffer(0x01) << 16)  / 100.0f;
       reg0x3106_success = true;
+      has_3106_sample = true;
+      last_3106_success_ms = millis();
       reg_0x3106_success_count++; 
       reg_0x3106_last_status = 0x00;
-      
+
     } else {
       reg_0x3106_fail_count++; 
       reg_0x3106_last_status = result;
     }
-    
-    
+
     // ========================
     // Read Battery Temperature
     // ========================
+    float cached_battery_temp = battery_temp;
     battery_temp = NAN;
     reg0x311B_success = false;
+    reg0x3110_success = false;
+    reg0x3111_success = false;
     battery_temp_source = "N/A";
     result = read_modbus_registers_with_retry(0x311B, 1);
     if (result == node.ku8MBSuccess)  {
       battery_temp = node.getResponseBuffer(0x00);
-      
+
       if (battery_temp  != 0) {
         reg0x311B_success = true;
         reg_0x311B_success_count++;
         battery_temp_source = "0x311B";
         reg_0x311B_last_status = 0x00;
-        
+
       } else {
         reg_0x311B_last_status = MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE;
         reg_0x311B_fail_count++;
-        
+
       }
-      
+
     } else  {
       reg_0x311B_fail_count++;
       reg_0x311B_last_status = MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE;
-      
+
     }
-    
+
     if (!reg0x311B_success) {
       reg0x3110_success = false;
       result = read_modbus_registers_with_retry(0x3110, 2);
@@ -938,8 +928,7 @@ void loop() {
           reg_0x3110_success_count++;
           battery_temp_source = "0x3110";
           reg_0x3110_last_status = 0x00;
-          
-          
+
         }  else {
           reg_0x3110_last_status = MODBUS_ERR_SUCCESS_BUT_INVALID_VALUE; //"Success but 0C temp";
           reg_0x3110_fail_count++;
@@ -948,7 +937,7 @@ void loop() {
       else  {
         reg_0x3110_fail_count += 1;
         reg_0x3110_last_status = result;
-        
+
         if (battery_temp == 0 or !reg0x3110_success) {
           result = read_modbus_registers_with_retry(0x3111, 2);
           if (result == node.ku8MBSuccess) {
@@ -965,15 +954,24 @@ void loop() {
         }
       }
     }
-    
-    
-    battery_soc = NAN;
+
+    bool temperature_read_ok = (reg0x311B_success || reg0x3110_success || reg0x3111_success)
+                               && std::isfinite(battery_temp) && battery_temp != 0;
+    if (temperature_read_ok) {
+      has_temperature_sample = true;
+      last_temperature_success_ms = millis();
+    } else {
+      battery_temp = cached_battery_temp;
+    }
+
     // Battery SOC
     //result = read_modbus_registers_with_retry(0x311A, 2);
     result = read_modbus_registers_with_retry(0x311A, 1);
     reg0x311A_success = false;
     if (result == node.ku8MBSuccess)  {
       reg0x311A_success = true;
+      has_311A_sample = true;
+      last_311A_success_ms = millis();
       reg_0x311a_success_count = reg_0x311a_success_count + 1;
       battery_soc = node.getResponseBuffer(0x00);
       reg_0x311a_last_status = 0x00;
@@ -985,16 +983,22 @@ void loop() {
     if (!mqttClient.connected()) {
       reconnect_to_mqtt();
     }
-    
+
+    // Publish cached measurements before the corresponding availability updates.
+    // Never mark a group online until it has at least one valid measurement.
     mqtt_last_status = mqttClient.publish(mqtt_topic, create_json_payload().c_str(), true);
+    if (mqttClient.connected()) {
+      publish_group_availability("3100", sample_fresh(has_3100_sample, last_3100_success_ms));
+      publish_group_availability("3106", sample_fresh(has_3106_sample, last_3106_success_ms));
+      publish_group_availability("311A", sample_fresh(has_311A_sample, last_311A_success_ms));
+      publish_group_availability("temperature", sample_fresh(has_temperature_sample, last_temperature_success_ms));
+    }
     if (mqtt_last_status) mqtt_last_sent_millis = millis();
     ct_mqtt = ct_mqtt + 1;
-    
-    
+
     digitalWrite(HB, HIGH);
     delay(100);
     digitalWrite(HB, LOW);
   }
-  
-}
 
+}
